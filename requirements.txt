@@ -1,0 +1,42 @@
+# FastAPI and server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Async HTTP client
+httpx>=0.26.0
+
+# WebSocket client
+websockets>=12.0
+
+# Redis
+upstash-redis>=1.0.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# Validation and settings
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Wallet authentication
+eth-account>=0.5.0
+
+# Blockchain queries
+web3>=6.0.0
+
+# Polymarket SDK
+py-clob-client>=0.14.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+respx>=0.22.0
+
+# Development
+black>=24.0.0
+ruff>=0.1.0
+mypy>=1.8.0
