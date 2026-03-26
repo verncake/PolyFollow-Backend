@@ -4,7 +4,7 @@ Pydantic schemas for API request/response validation.
 All monetary fields use Decimal for precision.
 """
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import Optional
 from datetime import datetime
 
@@ -89,6 +89,10 @@ class AccountSummaryResponse(BaseModel):
     class Config:
         populate_by_name = True
 
+    @field_serializer("win_rate", "profit_factor")
+    def serialize_decimal(self, value: Decimal) -> float:
+        return float(value)
+
 
 class LeaderboardEntry(BaseModel):
     """Schema for a leaderboard entry."""
@@ -104,6 +108,10 @@ class LeaderboardEntry(BaseModel):
 
     class Config:
         populate_by_name = True
+
+    @field_serializer("win_rate", "profit_factor")
+    def serialize_decimal(self, value: Decimal) -> float:
+        return float(value)
 
 
 class LeaderboardResponse(BaseModel):
