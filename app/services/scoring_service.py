@@ -13,7 +13,7 @@ Scoring service for calculating trader performance scores (10 dimensions).
 9. Close Disc. (平仓纪律) - 主动平仓比例
 10. Capital (资金体量) - 总资金
 
-每个维度 0-10 分，最终加权求和到 0-100 分。
+每个维度 0-100 分，最终平均到 0-100 分。
 """
 import math
 import statistics
@@ -54,7 +54,7 @@ class AddressScores:
     close_disc_raw: float = 0.0         # 平仓纪律
     capital_raw: float = 0.0            # 资金体量
 
-    # 标准化分数 (0-10)
+    # 标准化分数 (0-100)
     profitability: float = 0.0
     win_rate: float = 0.0
     profit_factor: float = 0.0
@@ -185,19 +185,19 @@ class AddressScorer:
         scores.close_disc = self._map_close_disc(scores.close_disc_raw)
         scores.capital = self._map_capital(scores.capital_raw)
 
-        # 计算加权总分 (0-100)
+        # 计算总分 (0-100): sum of all 10 dimensions / 10
         scores.total_score = int(round(
-            scores.profitability * self.weights["profitability"] +
-            scores.win_rate * self.weights["win_rate"] +
-            scores.profit_factor * self.weights["profit_factor"] +
-            scores.risk_mgmt * self.weights["risk_mgmt"] +
-            scores.experience * self.weights["experience"] +
-            scores.pos_control * self.weights["pos_control"] +
-            scores.anti_bot * self.weights["anti_bot"] +
-            scores.focus * self.weights["focus"] +
-            scores.close_disc * self.weights["close_disc"] +
-            scores.capital * self.weights["capital"]
-        ) * 10)
+            scores.profitability +
+            scores.win_rate +
+            scores.profit_factor +
+            scores.risk_mgmt +
+            scores.experience +
+            scores.pos_control +
+            scores.anti_bot +
+            scores.focus +
+            scores.close_disc +
+            scores.capital
+        ) / 10)
 
         # Bot风险检测
         scores.risk_flags = self._detect_risk_flags(
@@ -226,26 +226,56 @@ class AddressScorer:
         unrealized_pnl = sum(p.get("cashPnl", 0) for p in positions)
         profitability = realized_pnl + unrealized_pnl
 
-        # === 2. Win Rate (过滤小额仓位) ===
-        valid_closed = [p for p in closed_positions
-                       if abs(p.get("avgPrice", 0) * p.get("totalBought", 0)) >= self.MIN_TRADE_VALUE]
-        winning_closed = [p for p in valid_closed if p.get("realizedPnl", 0) > 0]
-        win_rate = len(winning_closed) / len(valid_closed) * 100 if valid_closed else 0.0
+        # === 2. Win Rate ===
+        # Calculate win rate using ALL positions (no filtering)
+        # Win rate is calculated based on number of winning vs losing positions
+        all_closed = [p for p in closed_positions if p.get("realizedPnl", 0) != 0 or p.get("cost", 0) > 0]
+        winning_closed = [p for p in all_closed if p.get("realizedPnl", 0) > 0]
+        losing_closed = [p for p in all_closed if p.get("realizedPnl", 0) < 0]
+
+        # Basic win rate: winning positions / total positions
+        basic_win_rate = len(winning_closed) / len(all_closed) * 100 if all_closed else 0.0
+
+        # Calculate weighted win rate: consider profit amount
+        # Weight = abs(realizedPnl) to give more weight to larger positions
+        total_winning_amount = sum(abs(p.get("realizedPnl", 0)) for p in winning_closed)
+        total_losing_amount = sum(abs(p.get("realizedPnl", 0)) for p in losing_closed)
+        total_amount = total_winning_amount + total_losing_amount
+
+        # Weighted win rate: proportion of winning amount
+        if total_amount > 0:
+            weighted_win_rate = (total_winning_amount / total_amount) * 100
+        else:
+            weighted_win_rate = basic_win_rate
+
+        # Use a combination: 60% basic win rate + 40% weighted win rate
+        # This penalizes cases where win rate is high but winning amounts are small
+        win_rate = basic_win_rate * 0.6 + weighted_win_rate * 0.4
 
         # === 3. Profit Factor ===
-        gross_profit = sum(p.get("realizedPnl", 0) for p in valid_closed if p.get("realizedPnl", 0) > 0)
-        gross_loss = abs(sum(p.get("realizedPnl", 0) for p in valid_closed if p.get("realizedPnl", 0) < 0))
+        gross_profit = sum(p.get("realizedPnl", 0) for p in all_closed if p.get("realizedPnl", 0) > 0)
+        gross_loss = abs(sum(p.get("realizedPnl", 0) for p in all_closed if p.get("realizedPnl", 0) < 0))
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else (99.0 if gross_profit > 0 else 0.0)
 
         # === 4. Risk Mgmt ===
+        def get_position_size(p):
+            """Get position size, using cost or realizedPnl as fallback."""
+            cost = p.get("cost", 0)
+            if cost:
+                return abs(cost)
+            avg_total = abs(p.get("avgPrice", 0) * p.get("totalBought", 0))
+            if avg_total > 0:
+                return avg_total
+            return abs(p.get("realizedPnl", 0))
+
         avg_winning_size = statistics.mean([
-            p.get("avgPrice", 0) * p.get("totalBought", 0)
-            for p in valid_closed if p.get("realizedPnl", 0) > 0
+            get_position_size(p)
+            for p in all_closed if p.get("realizedPnl", 0) > 0
         ]) if winning_closed else 0.0
         avg_losing_size = statistics.mean([
-            abs(p.get("avgPrice", 0) * p.get("totalBought", 0))
-            for p in valid_closed if p.get("realizedPnl", 0) < 0
-        ]) if any(p.get("realizedPnl", 0) < 0 for p in valid_closed) else 0.0
+            get_position_size(p)
+            for p in all_closed if p.get("realizedPnl", 0) < 0
+        ]) if any(p.get("realizedPnl", 0) < 0 for p in all_closed) else 0.0
         risk_mgmt_ratio = avg_winning_size / avg_losing_size if avg_losing_size > 0 else (2.0 if avg_winning_size > 0 else 0.0)
 
         # === 5. Experience ===
@@ -459,68 +489,187 @@ class AddressScorer:
     def _map_profitability(self, raw: float) -> float:
         """
         Profitability: 对数归一化避免首富压缩其他人.
-        log(1 + abs(x)) / log(1 + max_expected) * 10
+        log(1 + abs(x)) / log(1 + max_expected) * 100
         """
         if raw <= 0:
-            return max(0.0, 5.0 + raw / 10)  # 亏损也给出路
+            return max(0.0, 50.0 + raw)  # 亏损也给出路
         # 对数归一化
         log_pnl = math.log1p(raw)
         max_log = math.log1p(10000)  # 假设1万是好成绩
-        return min(log_pnl / max_log * 10, 10.0)
+        return min(log_pnl / max_log * 100, 100.0)
 
     def _map_win_rate(self, raw: float) -> float:
-        """Win Rate: 0-100% 直接映射到 0-10"""
-        return min(raw / 100 * 10, 10.0)
+        """
+        Win Rate: raw is already a combined score (60% basic + 40% weighted)
+        The raw value represents: how good is the win rate considering both
+        the number of wins and the amount won.
+        """
+        # raw is already 0-100 combined score
+        return min(raw, 100.0)
 
     def _map_profit_factor(self, raw: float) -> float:
-        """Profit Factor: 0-5+ 映射到 0-10"""
-        return min(raw / self.PF_MAX_SCALE * 10, 10.0)
+        """Profit Factor: 0-5+ 映射到 0-100"""
+        return min(raw / self.PF_MAX_SCALE * 100, 100.0)
 
     def _map_risk_mgmt(self, raw: float) -> float:
         """Risk Mgmt: avg_winning / avg_losing, >1.5 好, <1 差"""
         # 1.0 = 平, 2.0 = 好, 3.0+ = 优秀
-        return min(raw / 2.0 * 10, 10.0)
+        return min(raw / 2.0 * 100, 100.0)
 
     def _map_experience(self, raw: float) -> float:
         """Experience: sqrt(days * trades) 对数增长"""
-        # sqrt(30 * 100) = 55 -> 约7分
+        # sqrt(30 * 100) = 55 -> 约70分
         # sqrt(365 * 1000) = 604 -> 满分
-        return min(math.log1p(raw) / math.log1p(600) * 10, 10.0)
+        return min(math.log1p(raw) / math.log1p(600) * 100, 100.0)
 
     def _map_pos_control(self, raw: float) -> float:
         """Pos Control: 单一仓位占比, <20% 好, >80% 危险"""
         # 占比越低越好
         if raw <= 0.15:
-            return 10.0
+            return 100.0
         elif raw <= 0.20:
-            return 8.0
+            return 80.0
         elif raw <= 0.30:
-            return 6.0
+            return 60.0
         elif raw <= 0.50:
-            return 4.0
+            return 40.0
         elif raw <= 0.80:
-            return 2.0
+            return 20.0
         else:
             return 0.0
 
     def _map_anti_bot(self, raw: float) -> float:
-        """Anti-Bot: 直接使用计算出的像人程度"""
-        return min(raw, 10.0)
+        """Anti-Bot: 直接使用计算出的像人程度 (原始值是0-10, 映射到0-100)"""
+        return min(raw * 10, 100.0)
 
     def _map_focus(self, raw: float) -> float:
-        """Focus: HHI * 10, 专注者高分"""
-        return min(raw, 10.0)
+        """Focus: HHI * 100, 专注者高分"""
+        return min(raw * 10, 100.0)
 
     def _map_close_disc(self, raw: float) -> float:
-        """Close Disc: 主动平仓比例"""
-        return min(raw, 10.0)
+        """Close Disc: 主动平仓比例 (原始值是0-10, 映射到0-100)"""
+        return min(raw * 10, 100.0)
 
     def _map_capital(self, raw: float) -> float:
-        """Capital: 分位数思想, 1万=8分, 10万=10分"""
+        """Capital: 分位数思想, 1万=80分, 10万=100分"""
         if raw <= 0:
             return 0.0
-        # log scale: 100 -> ~5分, 1000 -> ~7分, 10000 -> 9分
-        return min(math.log10(raw + 1) / 4 * 10, 10.0)
+        # log scale: 100 -> ~50分, 1000 -> ~70分, 10000 -> 90分
+        return min(math.log10(raw + 1) / 4 * 100, 100.0)
+
+
+# ========== DB-based scoring (uses closed positions from database) ==========
+
+async def get_address_scores_from_db(
+    address: str,
+    positions: List[Dict[str, Any]],
+    trades: List[Dict[str, Any]],
+    account_age_days: Optional[int] = None,
+    total_capital: Optional[float] = None,
+) -> AddressScores:
+    """
+    Calculate address scores using closed positions from the database.
+
+    This function fetches closed positions from the database and transforms
+    them to the format expected by the AddressScorer.
+
+    Args:
+        address: Wallet address
+        positions: Current positions (from API)
+        trades: Trade history (from API)
+        account_age_days: Optional account age in days
+        total_capital: Optional total capital
+
+    Returns:
+        AddressScores object
+    """
+    from app.core.database import get_db_service
+
+    db = get_db_service()
+
+    # Fetch closed AND pending_redeem positions from database
+    # (pending_redeem positions are also settled but user hasn't redeemed yet)
+    db_closed_positions = await db.get_user_positions(
+        user_address=address,
+        status="closed",
+        limit=10000,
+    )
+    db_pending_redeem = await db.get_user_positions(
+        user_address=address,
+        status="pending_redeem",
+        limit=10000,
+    )
+    # Combine both - they both represent settled positions
+    db_closed_positions.extend(db_pending_redeem)
+
+    # Fetch active positions from database for proper P/L calculation
+    # (Gamma API positions may have stale cashPnl values)
+    db_active_positions = await db.get_user_positions(
+        user_address=address,
+        status="active",
+        limit=10000,
+    )
+
+    # Transform DB active positions to API format
+    # These have correct unrealized_pnl from enhanced sync
+    db_positions = []
+    for p in db_active_positions:
+        transformed = {
+            "cashPnl": p.get("unrealized_pnl", 0),
+            "currentValue": p.get("current_value", 0),
+            "initialValue": p.get("initial_value", 0),
+            "size": p.get("size", 0),
+            "avgPrice": p.get("avg_price", 0),
+            "cost": p.get("cost", 0),
+            "side": p.get("side", ""),
+            "eventSlug": p.get("market_slug", ""),
+            "condition_id": p.get("condition_id", ""),
+            "market_title": p.get("market_title", ""),
+        }
+        db_positions.append(transformed)
+
+    # Fetch trades from database if not provided
+    if not trades:
+        db_trades = await db.get_user_trades(
+            user_address=address,
+            limit=10000,
+        )
+        # Transform DB trades to API format
+        for t in db_trades:
+            trades.append({
+                "id": str(t.get("id", "")),
+                "side": t.get("side", ""),
+                "size": t.get("size", 0),
+                "price": t.get("price", 0),
+                "fee": t.get("fee", 0),
+                "timestamp": t.get("timestamp", 0),
+                "condition_id": t.get("condition_id", ""),
+            })
+
+    # Transform DB fields to API format
+    closed_positions = []
+    for p in db_closed_positions:
+        # Map DB field names to API expected names
+        transformed = {
+            "realizedPnl": p.get("realized_pnl", 0),
+            "cashPnl": p.get("unrealized_pnl", 0),
+            "avgPrice": p.get("avg_price", 0),
+            "totalBought": p.get("size", 0),
+            "cost": p.get("cost", 0),
+            "side": p.get("side", ""),
+            "eventSlug": p.get("market_slug", ""),
+            "condition_id": p.get("condition_id", ""),
+        }
+        closed_positions.append(transformed)
+
+    return get_address_scores(
+        address,
+        db_positions,  # Use DB active positions for correct unrealized_pnl
+        closed_positions,
+        trades,
+        account_age_days=account_age_days,
+        total_capital=total_capital,
+    )
 
 
 # ========== 兼容旧接口 ==========

@@ -56,9 +56,12 @@ class DataClient(BasePolymarketClient):
             "limit": limit,
             "offset": offset,
             "sortDirection": sort_direction,
-            "redeemable": redeemable,
-            "mergeable": mergeable,
         }
+        # Only include filter params when True to avoid filtering out all positions
+        if redeemable:
+            params["redeemable"] = True
+        if mergeable:
+            params["mergeable"] = True
         if market:
             params["market"] = market
         if event_id:
@@ -103,6 +106,38 @@ class DataClient(BasePolymarketClient):
             params["market"] = market
         if title:
             params["title"] = title
+        if sort_by:
+            params["sortBy"] = sort_by
+        return await self._request_with_retry("GET", url, params=params)
+
+    async def get_activity(
+        self,
+        user: str,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: Optional[str] = None,
+        sort_direction: str = "DESC",
+    ) -> list[dict[str, Any]]:
+        """
+        Get user activity (trades) from Polymarket API.
+
+        Args:
+            user: Wallet address
+            limit: Max number of activities (max 50)
+            offset: Pagination offset
+            sort_by: Sort field (default TIMESTAMP)
+            sort_direction: ASC or DESC
+
+        Returns:
+            List of activity objects
+        """
+        url = self._build_url("/activity")
+        params = {
+            "user": user.lower(),
+            "limit": min(limit, 50),
+            "offset": offset,
+            "sortDirection": sort_direction,
+        }
         if sort_by:
             params["sortBy"] = sort_by
         return await self._request_with_retry("GET", url, params=params)
