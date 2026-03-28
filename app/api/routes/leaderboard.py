@@ -22,10 +22,11 @@ LEADERBOARD_CACHE_TTL = 300  # 5 minutes
 TOP_LEADERBOARD_CACHE_TTL = 60  # 1 minute for top 200
 
 
-@router.get("/")
+@router.get("")
 async def get_leaderboard(
     category: Optional[str] = None,
     time_period: Optional[str] = Query(None, description="e.g., 'daily', 'weekly', 'monthly', 'all'"),
+    sort_by: Optional[str] = Query("score", description="Sort field: score, total_trades, win_rate, profit_factor"),
     limit: int = Query(200, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -37,17 +38,30 @@ async def get_leaderboard(
     """
     redis = get_redis()
 
-    # Try cache first for top 200
+    # Map sort_by parameter to actual field (always descending order)
+    sort_field_map = {
+        "score": "score",
+        "total_trades": "total_trades",
+        "win_rate": "win_rate",
+        "profit_factor": "profit_factor",
+        "active": "total_trades",  # active maps to total_trades
+    }
+    sort_field = sort_field_map.get(sort_by, "score")
+
+    # Try cache first for top 200 (cache stores data sorted by score)
     cache_key = f"leaderboard:top200"
     if limit <= 200 and offset == 0:
         cached = redis.get(cache_key)
         if cached:
             entries = json.loads(cached)
+            # Sort cached entries according to requested sort order (in-memory sort, no new API call)
+            entries.sort(key=lambda x: x.get(sort_field, 0), reverse=True)
             return {
                 "entries": entries[:limit],
                 "total_count": len(entries),
                 "cached": True,
                 "cache_ttl": TOP_LEADERBOARD_CACHE_TTL,
+                "sort_by": sort_by or "score",
             }
 
     # Fetch from Polymarket API
@@ -87,29 +101,31 @@ async def get_leaderboard(
         batch = raw_leaderboard[i:i + BATCH_SIZE]
 
         # Create tasks for all entries in batch
-        tasks = []
+        batch_tasks = []
+        batch_entries = []
         for entry in batch:
             address = entry.get("address", "")
             if not address:
-                tasks.append(None)  # Placeholder for skipped entries
-            else:
-                tasks.append((
-                    data_client.get_positions(user=address),
-                    data_client.get_closed_positions(user=address),
-                    data_client.get_trades(user=address),
-                ))
+                continue
+            batch_entries.append(entry)
+            batch_tasks.append((
+                data_client.get_positions(user=address),
+                data_client.get_closed_positions(user=address),
+                data_client.get_trades(user=address),
+            ))
 
         # Execute batch in parallel
+        if not batch_tasks:
+            continue
+
         results = await asyncio.gather(
-            *[t if t is None else asyncio.gather(*t) for t in tasks],
+            *[asyncio.gather(*t) for t in batch_tasks],
             return_exceptions=True
         )
 
         # Process results
-        for entry, result in zip(batch, results):
+        for entry, result in zip(batch_entries, results):
             address = entry.get("address", "")
-            if not address:
-                continue
             if isinstance(result, Exception):
                 # On error, use empty data
                 scores = get_address_scores(address, [], [], [])
@@ -150,6 +166,7 @@ async def get_leaderboard(
         "cached": False,
         "category": category,
         "time_period": time_period,
+        "sort_by": sort_by or "score",
     }
 
 

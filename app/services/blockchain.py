@@ -13,7 +13,7 @@ from web3 import Web3
 
 
 # USDC.e (PoS USDC on Polygon) - ERC20 token address
-USDC_E_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 
 # Standard ERC20 ABI - only what we need
 ERC20_ABI = [
@@ -53,6 +53,7 @@ class BlockchainClient:
 
     # Fallback public RPCs (free, rate-limited)
     FALLBACK_RPCS = [
+        "https://polygon-bor-rpc.publicnode.com",
         "https://polygon.llamarpc.com",
         "https://rpc.ankr.com/polygon",
     ]

@@ -89,3 +89,7 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+
+# Playwright
+test-results/
+playwright-report/
