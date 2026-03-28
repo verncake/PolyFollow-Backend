@@ -701,7 +701,7 @@ class DatabaseService:
                     timestamp=a.get("timestamp", 0),
                 )
                 stmt = stmt.on_conflict_do_nothing(
-                    index_elements=["user_address", "condition_id", "asset_id", "activity_type", "timestamp"]
+                    constraint="uq_activity_identity"
                 )
                 result = await session.execute(stmt)
                 upsert_count += result.rowcount
