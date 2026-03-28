@@ -851,6 +851,85 @@ class DatabaseService:
             result = await session.execute(stmt)
             return result.rowcount
 
+    async def get_activities_for_conditions(
+        self,
+        user_address: str,
+        condition_ids: list[tuple[str, str]],
+        activity_type: str = "TRADE",
+    ) -> dict[tuple[str, str], Optional[dict]]:
+        """Batch fetch activities for multiple condition_id/asset_id pairs.
+
+        Used to find proxy timestamps for pending_redeem positions efficiently
+        (avoids N+1 queries when enriching positions).
+
+        Args:
+            user_address: User wallet address
+            condition_ids: List of (condition_id, asset_id) tuples
+            activity_type: Activity type (default: TRADE)
+
+        Returns:
+            Dict mapping (condition_id, asset_id) -> latest activity dict or None
+        """
+        if not condition_ids:
+            return {}
+
+        async with self.get_session() as session:
+            # Build query to get latest activity per (condition_id, asset_id) pair
+            # Using a subquery approach for PostgreSQL
+            subq = (
+                select(
+                    Activity.condition_id,
+                    Activity.asset_id,
+                    func.max(Activity.timestamp).label("max_timestamp"),
+                )
+                .where(
+                    and_(
+                        Activity.user_address == user_address.lower(),
+                        Activity.condition_id.in_([c[0] for c in condition_ids]),
+                        Activity.activity_type == activity_type,
+                    )
+                )
+                .group_by(Activity.condition_id, Activity.asset_id)
+            ).subquery()
+
+            # Main query to get full activity records
+            query = (
+                select(Activity)
+                .join(
+                    subq,
+                    and_(
+                        Activity.condition_id == subq.c.condition_id,
+                        Activity.asset_id == subq.c.asset_id,
+                        Activity.timestamp == subq.c.max_timestamp,
+                    )
+                )
+            )
+
+            result = await session.execute(query)
+            activities = result.scalars().all()
+
+            # Build result dict
+            result_dict = {}
+            for activity in activities:
+                key = (activity.condition_id, activity.asset_id)
+                result_dict[key] = {
+                    "condition_id": activity.condition_id,
+                    "asset_id": activity.asset_id,
+                    "activity_type": activity.activity_type,
+                    "side": activity.side,
+                    "size": float(activity.size),
+                    "price": float(activity.price),
+                    "fee": float(activity.fee) if activity.fee else 0,
+                    "market_title": activity.market_title,
+                    "market_slug": activity.market_slug,
+                    "outcome": activity.outcome,
+                    "transaction_hash": activity.transaction_hash,
+                    "timestamp": activity.timestamp,
+                    "created_at": activity.created_at.isoformat() if activity.created_at else None,
+                }
+
+            return result_dict
+
 
 # Singleton instance
 _db_service: Optional[DatabaseService] = None

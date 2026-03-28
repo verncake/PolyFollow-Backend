@@ -359,22 +359,23 @@ async def get_account_closed_positions(
     # Pre-fetch activity timestamps for pending_redeem positions
     # This is used for sorting when closed_at is not available
     # Use TRADE activities which have the matching asset_id
+    # Batch fetch all at once to avoid N+1 queries
     pending_redeem_activity_timestamps = {}
-    for pos in db_positions:
-        status = pos.get("status", "")
-        closed_at = pos.get("closed_at")
-        if status == "pending_redeem" and not closed_at:
-            cond_id = pos.get("condition_id", "")
-            asset_id = pos.get("asset_id", "")
-            if cond_id and asset_id:
-                activity = await db.get_activity_for_condition(
-                    user_address=address,
-                    condition_id=cond_id,
-                    asset_id=asset_id,
-                    activity_type="TRADE",
-                )
-                if activity and activity.get("timestamp"):
-                    pending_redeem_activity_timestamps[cond_id] = activity["timestamp"]
+    pending_redeem_pairs = [
+        (pos.get("condition_id", ""), pos.get("asset_id", ""))
+        for pos in db_positions
+        if pos.get("status") == "pending_redeem" and not pos.get("closed_at")
+        and pos.get("condition_id") and pos.get("asset_id")
+    ]
+    if pending_redeem_pairs:
+        activities_map = await db.get_activities_for_conditions(
+            user_address=address,
+            condition_ids=pending_redeem_pairs,
+            activity_type="TRADE",
+        )
+        for (cond_id, asset_id), activity in activities_map.items():
+            if activity and activity.get("timestamp"):
+                pending_redeem_activity_timestamps[cond_id] = activity["timestamp"]
 
     # Enrich positions with Gamma data and spread raw_data
     enriched_positions = []
