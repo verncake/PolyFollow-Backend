@@ -222,11 +222,11 @@ class DatabaseService:
                 }
 
                 if is_closed:
-                    # For closed positions, use closed_at in the unique constraint
-                    # side excluded because API doesn't return it
+                    # For closed positions, use (user_address, condition_id, asset_id, closed_at) in unique constraint
+                    # to match the actual unique constraint on the model
                     stmt = insert(Position).values(**values)
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["user_address", "condition_id", "closed_at"],
+                        index_elements=["user_address", "condition_id", "asset_id", "closed_at"],
                         set_={
                             "size": values["size"],
                             "avg_price": values["avg_price"],
@@ -237,10 +237,10 @@ class DatabaseService:
                         }
                     )
                 else:
-                    # For active positions, use condition_id + status as unique constraint
+                    # For active positions, use (user_address, condition_id, asset_id, status) as unique constraint
                     stmt = insert(Position).values(**values)
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["user_address", "condition_id", "status"],
+                        index_elements=["user_address", "condition_id", "asset_id", "status"],
                         set_={
                             "size": values["size"],
                             "avg_price": values["avg_price"],
@@ -445,7 +445,7 @@ class DatabaseService:
                         # Strip timezone to store as naive timestamp
                         if end_date.tzinfo is not None:
                             end_date = end_date.replace(tzinfo=None)
-                    except:
+                    except Exception:
                         end_date = None
 
                 values = {
@@ -667,6 +667,8 @@ class DatabaseService:
         Activities include trades, redemptions, splits, merges, etc.
         Linked to positions via condition_id and asset_id.
 
+        Uses INSERT ... ON CONFLICT DO NOTHING for atomic, race-condition-safe upserts.
+
         Args:
             user_address: User wallet address
             activities: List of activity dicts from Polymarket API
@@ -680,23 +682,9 @@ class DatabaseService:
         async with self.get_session() as session:
             upsert_count = 0
             for a in activities:
-                # Check if activity already exists
-                existing = await session.execute(
-                    select(Activity).where(
-                        and_(
-                            Activity.user_address == user_address.lower(),
-                            Activity.condition_id == a.get("conditionId", ""),
-                            Activity.asset_id == a.get("asset", ""),
-                            Activity.activity_type == a.get("type", "TRADE"),
-                            Activity.timestamp == a.get("timestamp", 0),
-                        )
-                    )
-                )
-                if existing.scalar_one_or_none():
-                    continue  # Skip if already exists
-
-                # Insert new activity
-                activity = Activity(
+                # Use INSERT ... ON CONFLICT DO NOTHING for atomic upsert
+                # This avoids the race condition of SELECT-then-INSERT
+                stmt = insert(Activity).values(
                     user_address=user_address.lower(),
                     condition_id=a.get("conditionId", ""),
                     asset_id=a.get("asset", ""),
@@ -712,8 +700,11 @@ class DatabaseService:
                     transaction_hash=a.get("transactionHash", ""),
                     timestamp=a.get("timestamp", 0),
                 )
-                session.add(activity)
-                upsert_count += 1
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["user_address", "condition_id", "asset_id", "activity_type", "timestamp"]
+                )
+                result = await session.execute(stmt)
+                upsert_count += result.rowcount
 
             await session.commit()
             return upsert_count

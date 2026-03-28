@@ -126,6 +126,23 @@ async def resample_pnl_data(
     # For closed: use closed_at
     # For pending_redeem without closed_at: use activity timestamp as proxy
     closed_positions = []
+
+    # Pre-fetch all activities for pending_redeem positions in a single batch query
+    # to avoid N+1 queries inside the loop
+    pending_redeem_pairs = [
+        (p.get("condition_id", ""), p.get("asset_id", ""))
+        for p in all_positions
+        if p.get("status") == "pending_redeem" and not p.get("closed_at")
+        and p.get("condition_id") and p.get("asset_id")
+    ]
+    activities_map = {}
+    if pending_redeem_pairs:
+        activities_map = await db.get_activities_for_conditions(
+            user_address=address,
+            condition_ids=pending_redeem_pairs,
+            activity_type="REDEEM",
+        )
+
     for p in all_positions:
         status = p.get("status")
         if status in ("closed", "pending_redeem"):
@@ -138,13 +155,8 @@ async def resample_pnl_data(
                 activity_timestamp = None
 
                 if condition_id and asset_id:
-                    # Try to find a REDEEM activity for this position
-                    activity = await db.get_activity_for_condition(
-                        user_address=address,
-                        condition_id=condition_id,
-                        asset_id=asset_id,
-                        activity_type="REDEEM",
-                    )
+                    # Look up pre-fetched activity from batch query
+                    activity = activities_map.get((condition_id, asset_id))
                     if activity and activity.get("timestamp"):
                         activity_timestamp = activity["timestamp"]
 
@@ -152,7 +164,7 @@ async def resample_pnl_data(
                     # Use activity timestamp as proxy closed_at
                     try:
                         closed_at = datetime.utcfromtimestamp(activity_timestamp)
-                    except:
+                    except Exception:
                         # Fall back to updated_at if timestamp is invalid
                         updated_at = p.get("updated_at")
                         if updated_at:
@@ -160,7 +172,7 @@ async def resample_pnl_data(
                                 try:
                                     closed_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
                                     closed_at = closed_at.replace(tzinfo=None)
-                                except:
+                                except Exception:
                                     continue
                             else:
                                 closed_at = updated_at
@@ -174,7 +186,7 @@ async def resample_pnl_data(
                             try:
                                 closed_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
                                 closed_at = closed_at.replace(tzinfo=None)
-                            except:
+                            except Exception:
                                 continue
                         else:
                             closed_at = updated_at
@@ -185,7 +197,7 @@ async def resample_pnl_data(
                     try:
                         closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
                         closed_at = closed_at.replace(tzinfo=None)
-                    except:
+                    except Exception:
                         continue
             closed_positions.append({**p, "_calculated_closed_at": closed_at})
 

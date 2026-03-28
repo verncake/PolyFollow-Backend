@@ -1,8 +1,10 @@
 """
 Upstash Redis connection singleton for the Polymarket Follow-Alpha system.
 """
+from datetime import datetime
 from upstash_redis import Redis
 from typing import Optional
+import json
 import os
 import uuid
 
@@ -71,8 +73,6 @@ def store_pnl_history(redis: Redis, address: str, period: str, data_points: list
         data_points: List of {timestamp, cumulative_pnl, position_count}
         ttl_seconds: TTL for the key (default 24 hours for 1d, longer for longer periods)
     """
-    import json
-
     key = f"pnl:history:{address.lower()}:{period}"
     if not data_points:
         return
@@ -113,8 +113,6 @@ def get_pnl_history(
     Returns:
         List of {timestamp, cumulative_pnl, position_count}
     """
-    import json
-
     key = f"pnl:history:{address.lower()}:{period}"
 
     # Get all members with scores in range
@@ -305,8 +303,6 @@ def set_sync_status(
         estimated_seconds_remaining: Estimated time until completion
         error: Error message if status is "failed"
     """
-    import json
-
     redis = get_redis()
     key = f"{SYNC_STATUS_PREFIX}{address.lower()}"
     data = {
@@ -328,8 +324,6 @@ def get_sync_status(address: str) -> Optional[dict]:
     Returns:
         Dict with status info, or None if not found
     """
-    import json
-
     redis = get_redis()
     key = f"{SYNC_STATUS_PREFIX}{address.lower()}"
     data = redis.get(key)
@@ -352,8 +346,7 @@ def set_sync_last_updated(address: str) -> None:
     Args:
         address: Wallet address
     """
-    import json
-    from datetime import datetime
+    redis = get_redis()
 
     redis = get_redis()
     key = f"{SYNC_LAST_UPDATED_PREFIX}{address.lower()}"
@@ -373,8 +366,6 @@ def get_sync_last_updated(address: str) -> Optional[str]:
     Returns:
         ISO timestamp string, or None if not found
     """
-    import json
-
     redis = get_redis()
     key = f"{SYNC_LAST_UPDATED_PREFIX}{address.lower()}"
     data = redis.get(key)

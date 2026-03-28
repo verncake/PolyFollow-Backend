@@ -174,7 +174,7 @@ class TestResamplePnLData:
 
         mock_db = MagicMock()
         mock_db.get_user_positions = AsyncMock(return_value=positions)
-        mock_db.get_activity_for_condition = AsyncMock(return_value=None)  # No activity found
+        mock_db.get_activities_for_conditions = AsyncMock(return_value={})  # No activity found
 
         with patch('app.api.routes.pnl.get_db_service', return_value=mock_db):
             result = await resample_pnl_data("0x123", "1W")
@@ -230,7 +230,7 @@ class TestResamplePnLData:
 
         mock_db = MagicMock()
         mock_db.get_user_positions = AsyncMock(return_value=positions)
-        mock_db.get_activity_for_condition = AsyncMock(return_value=activity)
+        mock_db.get_activities_for_conditions = AsyncMock(return_value={("cond1", "asset1"): activity})
 
         with patch('app.api.routes.pnl.get_db_service', return_value=mock_db):
             result = await resample_pnl_data("0x123", "1W")
@@ -322,7 +322,7 @@ class TestCashFlowMethod:
 
         mock_db = MagicMock()
         mock_db.get_user_positions = AsyncMock(return_value=positions)
-        mock_db.get_activity_for_condition = AsyncMock(return_value=None)
+        mock_db.get_activities_for_conditions = AsyncMock(return_value={})
 
         with patch('app.api.routes.pnl.get_db_service', return_value=mock_db):
             result = await resample_pnl_data("0x123", "1W")

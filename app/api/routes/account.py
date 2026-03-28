@@ -8,6 +8,8 @@ GET /api/v1/account/{address}/trades - Get trade history
 GET /api/v1/account/{address}/activity - Get activity history
 """
 import asyncio
+import logging
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from decimal import Decimal
@@ -160,7 +162,6 @@ async def _background_sync(address: str, sync_lock):
     - 90%: 10D score calculated (done within sync_positions_enhanced)
     - 100%: complete
     """
-    import logging
     logger = logging.getLogger(__name__)
 
     try:
@@ -258,7 +259,6 @@ async def get_account_positions(
         end_date = gamma_data.get("endDate") or gamma_data.get("end_date")
         days_until_end = None
         if end_date and not market_closed:
-            from datetime import datetime
             try:
                 if isinstance(end_date, str):
                     end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
@@ -266,7 +266,7 @@ async def get_account_positions(
                     end_dt = end_date
                 delta = end_dt - datetime.now(end_dt.tzinfo)
                 days_until_end = delta.days
-            except:
+            except Exception:
                 days_until_end = None
 
         enriched_positions.append({
@@ -401,7 +401,6 @@ async def get_account_closed_positions(
         end_date = gamma_data.get("endDate") or gamma_data.get("end_date")
         days_until_end = None
         if end_date and not market_closed:
-            from datetime import datetime
             try:
                 if isinstance(end_date, str):
                     end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
@@ -409,7 +408,7 @@ async def get_account_closed_positions(
                     end_dt = end_date
                 delta = end_dt - datetime.now(end_dt.tzinfo)
                 days_until_end = delta.days
-            except:
+            except Exception:
                 days_until_end = None
 
         # For pending_redeem positions without closed_at, use activity timestamp
@@ -777,29 +776,6 @@ async def get_pnl(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{address}/pnl/history")
-async def get_pnl_history(
-    address: str,
-    period: str = Query("1m", description="Time period: 1d, 1w, 1m, 6m, 1y"),
-):
-    """
-    Get PnL history as time-series data for charting.
-
-    Query params:
-        - period: Time period (1d, 1w, 1m, 6m, 1y). Default: 1m
-    """
-    pnl_service = get_pnl_service()
-
-    try:
-        pnl_data = await pnl_service.get_pnl_history(
-            user_address=address,
-            period=period.lower(),
-        )
-        return pnl_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.get("/{address}/sync-status")
 async def get_address_sync_status(address: str):
     """
@@ -872,8 +848,6 @@ async def trigger_address_sync(address: str):
     The 15-minute cooldown is enforced client-side. This endpoint just triggers
     the sync and returns the current status.
     """
-    from app.services.pnl_service import get_pnl_service
-
     redis = get_redis()
 
     # Check if already syncing

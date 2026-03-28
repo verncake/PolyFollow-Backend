@@ -3,6 +3,8 @@ Base HTTP client for Polymarket APIs.
 
 Provides retry logic, rate limiting, and error handling for all API clients.
 """
+import datetime
+from email.utils import parsedate_to_datetime
 import httpx
 from typing import Optional, Any
 import asyncio
@@ -194,9 +196,8 @@ class BasePolymarketClient:
                                 backoff = float(retry_after)
                             else:
                                 # HTTP date - calculate seconds until that time
-                                from email.utils import parsedate_to_datetime
                                 retry_time = parsedate_to_datetime(retry_after)
-                                backoff = max(0.1, (retry_time - __import__('datetime').datetime.now(retry_time.tzinfo)).total_seconds())
+                                backoff = max(0.1, (retry_time - datetime.now(retry_time.tzinfo)).total_seconds())
                         except (ValueError, TypeError):
                             pass  # Use exponential backoff fallback
                 elif response.status_code >= 500:
