@@ -270,7 +270,7 @@ async def get_account_positions(
                 days_until_end = None
 
         enriched_positions.append({
-            **pos.get("raw_data", {}),
+            **(pos.get("raw_data") or {}),
             **pos,
             # Explicitly set camelCase aliases for frontend compatibility
             "title": pos.get("market_title") or pos.get("title"),
@@ -422,7 +422,7 @@ async def get_account_closed_positions(
 
         # Spread raw_data fields first, then overlay position fields and enrichment
         enriched_positions.append({
-            **pos.get("raw_data", {}),
+            **(pos.get("raw_data") or {}),
             **pos,
             # Explicitly set camelCase aliases for frontend compatibility
             # These take precedence over raw_data if somehow duplicated
